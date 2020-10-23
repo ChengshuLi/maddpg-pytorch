@@ -11,21 +11,39 @@ from utils.make_env import make_env
 from utils.buffer import ReplayBuffer
 from utils.env_wrappers import SubprocVecEnv, DummyVecEnv
 from algorithms.maddpg import MADDPG
+from gibson2.envs.parallel_env import ParallelNavEnvironment
+from gibson2.envs.locomotor_env import NavigateRandomEnv
+from IPython import embed
+from collections import defaultdict
 
-USE_CUDA = False  # torch.cuda.is_available()
+# USE_CUDA = False  # torch.cuda.is_available()
+USE_CUDA = True
 
-def make_parallel_env(env_id, n_rollout_threads, seed, discrete_action):
-    def get_env_fn(rank):
-        def init_env():
-            env = make_env(env_id, discrete_action=discrete_action)
-            env.seed(seed + rank * 1000)
-            np.random.seed(seed + rank * 1000)
-            return env
-        return init_env
-    if n_rollout_threads == 1:
-        return DummyVecEnv([get_env_fn(0)])
-    else:
-        return SubprocVecEnv([get_env_fn(i) for i in range(n_rollout_threads)])
+# def make_parallel_env(env_id, n_rollout_threads, seed, discrete_action):
+#     def get_env_fn(rank):
+#         def init_env():
+#             env = make_env(env_id, discrete_action=discrete_action)
+#             env.seed(seed + rank * 1000)
+#             np.random.seed(seed + rank * 1000)
+#             return env
+#         return init_env
+#     if n_rollout_threads == 1:
+#         return DummyVecEnv([get_env_fn(0)])
+#     else:
+#         return SubprocVecEnv([get_env_fn(i) for i in range(n_rollout_threads)])
+
+def batch_obs(observations, torchify=False):
+    batch = defaultdict(list)
+
+    for obs in observations:
+        for sensor in obs:
+            batch[sensor].append(obs[sensor])
+
+    for sensor in batch:
+        batch[sensor] = np.array(batch[sensor])
+        if torchify:
+            batch[sensor] = Variable(torch.Tensor(batch[sensor]), requires_grad=False) 
+    return batch
 
 def run(config):
     model_dir = Path('./models') / config.env_id / config.model_name
@@ -48,23 +66,44 @@ def run(config):
     np.random.seed(config.seed)
     if not USE_CUDA:
         torch.set_num_threads(config.n_training_threads)
-    env = make_parallel_env(config.env_id, config.n_rollout_threads, config.seed,
-                            config.discrete_action)
+    # env = make_parallel_env(config.env_id, config.n_rollout_threads, config.seed,
+    #                         config.discrete_action)
+
+    config_file = '/cvgl2/u/chengshu/iGibson-MM/examples/configs/master_config.yaml'
+    def load_env(env_mode):
+        return NavigateRandomEnv(config_file=config_file,
+                                 mode=env_mode,
+                                 action_timestep=1/10.0,
+                                 physics_timestep=1/40.0,
+                                 random_height=True,
+                                 automatic_reset=True,
+                                 device_idx=1)
+
+    env = [lambda: load_env("headless")
+                  for env_id in range(config.n_rollout_threads)]
+    env = ParallelNavEnvironment(env, blocking=False)
+    obs = env.reset()
+
+    # maddpg = MADDPG.init_from_env(env, agent_alg=config.agent_alg,
+    #                               adversary_alg=config.adversary_alg,
+    #                               tau=config.tau,
+    #                               lr=config.lr,
+    #                               hidden_dim=config.hidden_dim)
     maddpg = MADDPG.init_from_env(env, agent_alg=config.agent_alg,
                                   adversary_alg=config.adversary_alg,
                                   tau=config.tau,
-                                  lr=config.lr,
-                                  hidden_dim=config.hidden_dim)
-    replay_buffer = ReplayBuffer(config.buffer_length, maddpg.nagents,
-                                 [obsp.shape[0] for obsp in env.observation_space],
-                                 [acsp.shape[0] if isinstance(acsp, Box) else acsp.n
-                                  for acsp in env.action_space])
+                                  lr=config.lr)
+    replay_buffer = ReplayBuffer(config.buffer_length,
+                                 maddpg.nagents,
+                                 env.observation_space,
+                                 [2, 5, 3])
     t = 0
     for ep_i in range(0, config.n_episodes, config.n_rollout_threads):
         print("Episodes %i-%i of %i" % (ep_i + 1,
                                         ep_i + 1 + config.n_rollout_threads,
                                         config.n_episodes))
-        obs = env.reset()
+        # env has automatic reset
+        # obs = env.reset()
         # obs.shape = (n_rollout_threads, nagent)(nobs), nobs differs per agent so not tensor
         maddpg.prep_rollouts(device='cpu')
 
@@ -73,18 +112,39 @@ def run(config):
         maddpg.reset_noise()
 
         for et_i in range(config.episode_length):
+            print('step:', et_i)
             # rearrange observations to be per agent, and convert to torch Variable
-            torch_obs = [Variable(torch.Tensor(np.vstack(obs[:, i])),
-                                  requires_grad=False)
-                         for i in range(maddpg.nagents)]
+            # torch_obs = [Variable(torch.Tensor(np.vstack(obs[:, i])),
+            #                       requires_grad=False)
+            #              for i in range(maddpg.nagents)]
+
+            obs_batched_torch = batch_obs(obs, torchify=True)
+            obs_batched_torch = [obs_batched_torch for _ in range(maddpg.nagents)]
             # get actions as torch Variables
-            torch_agent_actions = maddpg.step(torch_obs, explore=True)
+            torch_agent_actions = maddpg.step(obs_batched_torch, explore=True)
             # convert actions to numpy arrays
+            # agent_actions: list of [N, A], N is number of parallel envs, A is action space, list length is N_agents
             agent_actions = [ac.data.numpy() for ac in torch_agent_actions]
+
+            camera_actions = np.argmax(agent_actions[2], axis=1)
+            camera_actions = np.expand_dims(camera_actions, axis=1)
+
+            base_and_arm_actions = np.concatenate([agent_actions[0], agent_actions[1]], axis=1)
             # rearrange actions to be per environment
-            actions = [[ac[i] for ac in agent_actions] for i in range(config.n_rollout_threads)]
-            next_obs, rewards, dones, infos = env.step(actions)
-            replay_buffer.push(obs, agent_actions, rewards, next_obs, dones)
+            # actions: list of [N_agents, A], N_agents is number of agents, A is action space, list length is N, number of parallel envs
+            # actions = [[ac[i] for ac in agent_actions] for i in range(config.n_rollout_threads)]
+            env.set_camera(camera_actions)
+
+            # next_obs, rewards, dones, infos = env.step(actions)
+            outputs = env.step(base_and_arm_actions)
+            next_obs, rewards, dones, infos = [list(x) for x in zip(*outputs)]
+            obs_batched = batch_obs(obs, torchify=False)
+            next_obs_batched = batch_obs(next_obs, torchify=False)
+            rewards = np.array(rewards)
+            dones = np.array(dones)
+
+            # replay_buffer.push(obs, agent_actions, rewards, next_obs, dones)
+            replay_buffer.push(obs_batched, agent_actions, rewards, next_obs_batched, dones)
             obs = next_obs
             t += config.n_rollout_threads
             if (len(replay_buffer) >= config.batch_size and
@@ -96,9 +156,11 @@ def run(config):
                 for u_i in range(config.n_rollout_threads):
                     for a_i in range(maddpg.nagents):
                         sample = replay_buffer.sample(config.batch_size,
-                                                      to_gpu=USE_CUDA)
+                                                      to_gpu=USE_CUDA,
+                                                      norm_rews=False)
                         maddpg.update(sample, a_i, logger=logger)
                     maddpg.update_all_targets()
+                    print('update')
                 maddpg.prep_rollouts(device='cpu')
         ep_rews = replay_buffer.get_average_rewards(
             config.episode_length * config.n_rollout_threads)

@@ -1,12 +1,13 @@
 import numpy as np
 from torch import Tensor
 from torch.autograd import Variable
+from IPython import embed
 
 class ReplayBuffer(object):
     """
     Replay Buffer for multi-agent RL with parallel rollouts
     """
-    def __init__(self, max_steps, num_agents, obs_dims, ac_dims):
+    def __init__(self, max_steps, num_agents, observation_space, ac_dims):
         """
         Inputs:
             max_steps (int): Maximum number of timepoints to store in buffer
@@ -17,18 +18,36 @@ class ReplayBuffer(object):
         """
         self.max_steps = max_steps
         self.num_agents = num_agents
-        self.obs_buffs = []
+        # self.obs_buffs = []
         self.ac_buffs = []
         self.rew_buffs = []
-        self.next_obs_buffs = []
+        # self.next_obs_buffs = []
         self.done_buffs = []
-        for odim, adim in zip(obs_dims, ac_dims):
-            self.obs_buffs.append(np.zeros((max_steps, odim)))
-            self.ac_buffs.append(np.zeros((max_steps, adim)))
-            self.rew_buffs.append(np.zeros(max_steps))
-            self.next_obs_buffs.append(np.zeros((max_steps, odim)))
-            self.done_buffs.append(np.zeros(max_steps))
 
+        self.obs_buffs = {}
+        for sensor in observation_space.spaces:
+            self.obs_buffs[sensor] = np.ones((
+                max_steps,
+                *observation_space.spaces[sensor].shape
+            ))
+        
+        self.next_obs_buffs = {}
+        for sensor in observation_space.spaces:
+            self.next_obs_buffs[sensor] = np.ones((
+                max_steps,
+                *observation_space.spaces[sensor].shape
+            ))
+
+        # for odim, adim in zip(obs_dims, ac_dims):
+        #     self.obs_buffs.append(np.zeros((max_steps, odim)))
+        #     self.ac_buffs.append(np.zeros((max_steps, adim)))
+        #     self.rew_buffs.append(np.zeros(max_steps))
+        #     self.next_obs_buffs.append(np.zeros((max_steps, odim)))
+        #     self.done_buffs.append(np.zeros(max_steps))
+        for adim in ac_dims:
+            self.ac_buffs.append(np.ones((max_steps, adim)))
+            self.rew_buffs.append(np.ones(max_steps))
+            self.done_buffs.append(np.ones(max_steps))
 
         self.filled_i = 0  # index of first empty location in buffer (last index when full)
         self.curr_i = 0  # current index to write to (ovewrite oldest data)
@@ -37,36 +56,49 @@ class ReplayBuffer(object):
         return self.filled_i
 
     def push(self, observations, actions, rewards, next_observations, dones):
-        nentries = observations.shape[0]  # handle multiple parallel environments
-        if self.curr_i + nentries > self.max_steps:
-            rollover = self.max_steps - self.curr_i # num of indices to roll over
-            for agent_i in range(self.num_agents):
-                self.obs_buffs[agent_i] = np.roll(self.obs_buffs[agent_i],
-                                                  rollover, axis=0)
-                self.ac_buffs[agent_i] = np.roll(self.ac_buffs[agent_i],
-                                                 rollover, axis=0)
-                self.rew_buffs[agent_i] = np.roll(self.rew_buffs[agent_i],
-                                                  rollover)
-                self.next_obs_buffs[agent_i] = np.roll(
-                    self.next_obs_buffs[agent_i], rollover, axis=0)
-                self.done_buffs[agent_i] = np.roll(self.done_buffs[agent_i],
-                                                   rollover)
-            self.curr_i = 0
-            self.filled_i = self.max_steps
+        nentries = rewards.shape[0]  # handle multiple parallel environments
+        # if self.curr_i + nentries > self.max_steps:
+        #     rollover = self.max_steps - self.curr_i # num of indices to roll over            
+        #     for agent_i in range(self.num_agents):
+        #         # self.obs_buffs[agent_i] = np.roll(self.obs_buffs[agent_i],
+        #         #                                   rollover, axis=0)
+        #         self.ac_buffs[agent_i] = np.roll(self.ac_buffs[agent_i],
+        #                                          rollover, axis=0)
+        #         self.rew_buffs[agent_i] = np.roll(self.rew_buffs[agent_i],
+        #                                           rollover)
+        #         # self.next_obs_buffs[agent_i] = np.roll(
+        #         #     self.next_obs_buffs[agent_i], rollover, axis=0)
+        #         self.done_buffs[agent_i] = np.roll(self.done_buffs[agent_i],
+        #                                            rollover)
+        #     self.curr_i = 0
+        #     self.filled_i = self.max_steps
+
+        assert self.max_steps % nentries == 0, 'replay buffer size should be a multiple of N parallel envs'
+        
+        for sensor in self.obs_buffs:
+            self.obs_buffs[sensor][self.curr_i:self.curr_i + nentries] = observations[sensor]
+
+        for sensor in self.next_obs_buffs:
+            self.next_obs_buffs[sensor][self.curr_i:self.curr_i + nentries] = next_observations[sensor]
+
         for agent_i in range(self.num_agents):
-            self.obs_buffs[agent_i][self.curr_i:self.curr_i + nentries] = np.vstack(
-                observations[:, agent_i])
+            # self.obs_buffs[agent_i][self.curr_i:self.curr_i + nentries] = np.vstack(
+            #     observations[:, agent_i])
             # actions are already batched by agent, so they are indexed differently
             self.ac_buffs[agent_i][self.curr_i:self.curr_i + nentries] = actions[agent_i]
-            self.rew_buffs[agent_i][self.curr_i:self.curr_i + nentries] = rewards[:, agent_i]
-            self.next_obs_buffs[agent_i][self.curr_i:self.curr_i + nentries] = np.vstack(
-                next_observations[:, agent_i])
-            self.done_buffs[agent_i][self.curr_i:self.curr_i + nentries] = dones[:, agent_i]
-        self.curr_i += nentries
-        if self.filled_i < self.max_steps:
-            self.filled_i += nentries
-        if self.curr_i == self.max_steps:
-            self.curr_i = 0
+            # self.rew_buffs[agent_i][self.curr_i:self.curr_i + nentries] = rewards[:, agent_i]
+            self.rew_buffs[agent_i][self.curr_i:self.curr_i + nentries] = rewards
+            # self.next_obs_buffs[agent_i][self.curr_i:self.curr_i + nentries] = np.vstack(
+            #     next_observations[:, agent_i])
+            # self.done_buffs[agent_i][self.curr_i:self.curr_i + nentries] = dones[:, agent_i]
+            self.done_buffs[agent_i][self.curr_i:self.curr_i + nentries] = dones
+
+        self.curr_i = (self.curr_i + nentries) % self.max_steps
+        self.filled_i = min(self.filled_i + nentries, self.max_steps)
+        # if self.filled_i < self.max_steps:
+        #     self.filled_i += nentries
+        # if self.curr_i == self.max_steps:
+        #     self.curr_i = 0
 
     def sample(self, N, to_gpu=False, norm_rews=True):
         inds = np.random.choice(np.arange(self.filled_i), size=N,
@@ -82,10 +114,31 @@ class ReplayBuffer(object):
                         for i in range(self.num_agents)]
         else:
             ret_rews = [cast(self.rew_buffs[i][inds]) for i in range(self.num_agents)]
-        return ([cast(self.obs_buffs[i][inds]) for i in range(self.num_agents)],
+
+        ret_obs_all_agents = []
+        for i in range(self.num_agents):
+            ret_obs = {}
+            for sensor in self.obs_buffs:
+                ret_obs[sensor] = cast(self.obs_buffs[sensor][inds])
+            ret_obs_all_agents.append(ret_obs)
+        
+        ret_next_obs_all_agents = []
+        for i in range(self.num_agents):
+            ret_next_obs = {}
+            for sensor in self.next_obs_buffs:
+                ret_next_obs[sensor] = cast(self.next_obs_buffs[sensor][inds])
+            ret_next_obs_all_agents.append(ret_obs)
+        
+        # return ([cast(self.obs_buffs[i][inds]) for i in range(self.num_agents)],
+        #         [cast(self.ac_buffs[i][inds]) for i in range(self.num_agents)],
+        #         ret_rews,
+        #         [cast(self.next_obs_buffs[i][inds]) for i in range(self.num_agents)],
+        #         [cast(self.done_buffs[i][inds]) for i in range(self.num_agents)])
+
+        return (ret_obs_all_agents,
                 [cast(self.ac_buffs[i][inds]) for i in range(self.num_agents)],
                 ret_rews,
-                [cast(self.next_obs_buffs[i][inds]) for i in range(self.num_agents)],
+                ret_next_obs_all_agents,
                 [cast(self.done_buffs[i][inds]) for i in range(self.num_agents)])
 
     def get_average_rewards(self, N):
