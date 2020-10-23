@@ -181,7 +181,7 @@ class MADDPG(object):
                     all_pol_acs.append(pi(ob))
             # vf_in = torch.cat((*obs, *all_pol_acs), dim=1)
             vf_obs_in = obs[0]
-            vf_act_in = torch.cat(acs, dim=1)
+            vf_act_in = torch.cat(all_pol_acs, dim=1)
         else:  # DDPG
             vf_in = torch.cat((obs[agent_i], curr_pol_vf_in),
                               dim=1)
