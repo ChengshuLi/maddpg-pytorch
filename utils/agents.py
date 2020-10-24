@@ -29,6 +29,10 @@ class Critic(nn.Module):
             nn.Linear(total_action_dim, 256),
             nn.ReLU()
         )
+        self.goal_feat = nn.Sequential(
+            nn.Linear(3, 256),
+            nn.ReLU()
+        )
         self.critic_head = MLPNetwork(512 + 256, 1,
                                       hidden_dim=hidden_dim,
                                       constrain_out=False)
@@ -36,6 +40,7 @@ class Critic(nn.Module):
     def forward(self, obs, action):
         obs_feat = self.encoder(obs)
         actor_feat = self.actor_feat(action)
+        goal_feat = self.goal_feat(obs['goal'])
         feat = torch.cat([obs_feat, actor_feat], dim=1)
         return self.critic_head(feat)
 
