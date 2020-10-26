@@ -9,48 +9,12 @@ from IPython import embed
 import torch.nn as nn
 import torch
 
-class Actor(nn.Module):
-    def __init__(self, encoder, action_dim, discrete_action, hidden_dim=256):
-        super().__init__()
-        self.encoder = encoder
-        self.actor_head = MLPNetwork(512, action_dim,
-                                     hidden_dim=hidden_dim,
-                                     constrain_out=True,
-                                     discrete_action=discrete_action)
-    
-    def forward(self, obs):
-        return self.actor_head(self.encoder(obs))
-
-class Critic(nn.Module):
-    def __init__(self, encoder, total_action_dim, hidden_dim=256):
-        super().__init__()
-        self.encoder = encoder
-        self.actor_feat = nn.Sequential(
-            nn.Linear(total_action_dim, 256),
-            nn.ReLU()
-        )
-        self.goal_feat = nn.Sequential(
-            nn.Linear(3, 256),
-            nn.ReLU()
-        )
-        self.critic_head = MLPNetwork(512 + 256, 1,
-                                      hidden_dim=hidden_dim,
-                                      constrain_out=False)
-    
-    def forward(self, obs, action):
-        obs_feat = self.encoder(obs)
-        actor_feat = self.actor_feat(action)
-        goal_feat = self.goal_feat(obs['goal'])
-        feat = torch.cat([obs_feat, actor_feat], dim=1)
-        return self.critic_head(feat)
-
-
 class DDPGAgent(object):
     """
     General class for DDPG agents (policy, critic, target policy, target
     critic, exploration noise)
     """
-    def __init__(self, observation_space, action_dim, total_action_dim, hidden_dim=256,
+    def __init__(self, policy, target_policy, critic, target_critic, action_dim,
                  lr=0.01, discrete_action=True):
         """
         Inputs:
@@ -58,13 +22,18 @@ class DDPGAgent(object):
             num_out_pol (int): number of dimensions for policy output
             num_in_critic (int): number of dimensions for critic input
         """
-        self.encoder = Net(observation_space)
-        self.policy = Actor(self.encoder, action_dim, discrete_action, hidden_dim)
-        self.critic = Critic(self.encoder, total_action_dim, hidden_dim)
+        # self.encoder = Net(observation_space)
+        # self.policy = Actor(self.encoder, action_dim, discrete_action, hidden_dim)
+        # self.critic = Critic(self.encoder, total_action_dim, hidden_dim)
         
-        self.target_encoder = Net(observation_space)
-        self.target_policy = Actor(self.target_encoder, action_dim, discrete_action, hidden_dim)
-        self.target_critic = Critic(self.target_encoder, total_action_dim, hidden_dim)
+        # self.target_encoder = Net(observation_space)
+        # self.target_policy = Actor(self.target_encoder, action_dim, discrete_action, hidden_dim)
+        # self.target_critic = Critic(self.target_encoder, total_action_dim, hidden_dim)
+
+        self.policy = policy
+        self.target_policy = target_policy
+        self.critic = critic
+        self.target_critic = target_critic
 
         hard_update(self.target_policy, self.policy)
         hard_update(self.target_critic, self.critic)

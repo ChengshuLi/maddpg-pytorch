@@ -5,8 +5,47 @@ from utils.networks import MLPNetwork
 from utils.misc import soft_update, average_gradients, onehot_from_logits, gumbel_softmax
 from utils.agents import DDPGAgent
 from IPython import embed
+from utils.cnn_networks import Net
+import torch.nn as nn
+from collections import OrderedDict
+import gym
 
 MSELoss = torch.nn.MSELoss()
+
+class Actor(nn.Module):
+    def __init__(self, encoder, action_dim, discrete_action, hidden_dim=256):
+        super().__init__()
+        self.encoder = encoder
+        self.actor_head = MLPNetwork(512, action_dim,
+                                     hidden_dim=hidden_dim,
+                                     constrain_out=True,
+                                     discrete_action=discrete_action)
+
+    def forward(self, obs):
+        return self.actor_head(self.encoder(obs))
+
+class Critic(nn.Module):
+    def __init__(self, encoder, total_action_dim, hidden_dim=256):
+        super().__init__()
+        self.encoder = encoder
+        self.actor_feat = nn.Sequential(
+            nn.Linear(total_action_dim, 256),
+            nn.ReLU()
+        )
+        self.goal_feat = nn.Sequential(
+            nn.Linear(3, 256),
+            nn.ReLU()
+        )
+        self.critic_head = MLPNetwork(512 + 256, 1,
+                                      hidden_dim=hidden_dim,
+                                      constrain_out=False)
+
+    def forward(self, obs, action):
+        obs_feat = self.encoder(obs)
+        actor_feat = self.actor_feat(action)
+        goal_feat = self.goal_feat(obs['goal'])
+        feat = torch.cat([obs_feat, actor_feat], dim=1)
+        return self.critic_head(feat)
 
 class MADDPG(object):
     """
@@ -33,25 +72,50 @@ class MADDPG(object):
         self.nagents = len(alg_types)
         self.alg_types = alg_types
 
+        arm_observation_space, head_cam_observation_space = \
+            self.split_observation_space(observation_space)
+
+        base_encoder = Net(observation_space)
+        target_base_encoder = Net(observation_space)
+        arm_encoder =  Net(arm_observation_space)
+        target_arm_encoder =  Net(arm_observation_space)
+        head_cam_encoder = Net(head_cam_observation_space)
+        target_head_cam_encoder =  Net(head_cam_observation_space)
+
+        base_policy = Actor(base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
+        target_base_policy = Actor(target_base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
+
+        arm_policy = Actor(arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
+        target_arm_policy = Actor(target_arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
+
+        head_cam_policy = Actor(head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
+        target_head_cam_policy = Actor(target_head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
+
+        critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256)
+        target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256)
+
         self.agents = [
-            DDPGAgent(observation_space=observation_space,
+            DDPGAgent(policy=base_policy,
+                      target_policy=target_base_policy,
+                      critic=critic,
+                      target_critic=target_critic,
                       action_dim=2,
-                      total_action_dim=10,
                       lr=lr,
-                      discrete_action=False,
-                      hidden_dim=256),
-            DDPGAgent(observation_space=observation_space,
+                      discrete_action=False),
+            DDPGAgent(policy=arm_policy,
+                      target_policy=target_arm_policy,
+                      critic=critic,
+                      target_critic=target_critic,
                       action_dim=5,
-                      total_action_dim=10,
                       lr=lr,
-                      discrete_action=False,
-                      hidden_dim=256),
-            DDPGAgent(observation_space=observation_space,
+                      discrete_action=False),
+            DDPGAgent(policy=head_cam_policy,
+                      target_policy=target_head_cam_policy,
+                      critic=critic,
+                      target_critic=target_critic,
                       action_dim=3,
-                      total_action_dim=10,
                       lr=lr,
-                      discrete_action=True,
-                      hidden_dim=256),
+                      discrete_action=True),
         ]
         self.gamma = gamma
         self.tau = tau
@@ -84,6 +148,71 @@ class MADDPG(object):
         for a in self.agents:
             a.reset_noise()
 
+    def split_observation_space(self, observation_space):
+        head_cam_observation_space = OrderedDict()
+        arm_observation_space = OrderedDict()
+
+        if "base_proprioceptive" in observation_space.spaces:
+            head_cam_observation_space["base_proprioceptive"] = observation_space.spaces["base_proprioceptive"]
+            arm_observation_space["base_proprioceptive"] = observation_space.spaces["base_proprioceptive"]
+
+        if "arm_proprioceptive" in observation_space.spaces:
+            arm_observation_space["arm_proprioceptive"] = observation_space.spaces["arm_proprioceptive"]
+
+        if "rgb" in observation_space.spaces:
+            head_cam_observation_space["rgb"] = observation_space.spaces["rgb"]
+
+        if "depth" in observation_space.spaces:
+            head_cam_observation_space["depth"] = observation_space.spaces["depth"]
+
+        if "seg" in observation_space.spaces:
+            head_cam_observation_space["seg"] = observation_space.spaces["seg"]
+
+        if "wrist_rgb" in observation_space.spaces:
+            arm_observation_space["wrist_rgb"] = observation_space.spaces["wrist_rgb"]
+
+        if "wrist_depth" in observation_space.spaces:
+            arm_observation_space["wrist_depth"] = observation_space.spaces["wrist_depth"]
+
+        if "wrist_seg" in observation_space.spaces:
+            arm_observation_space["wrist_seg"] = observation_space.spaces["wrist_seg"]
+
+        head_cam_observation_space = gym.spaces.Dict(head_cam_observation_space)
+        arm_observation_space = gym.spaces.Dict(arm_observation_space)
+
+        return arm_observation_space, head_cam_observation_space
+
+    def split_observations(self, observations):
+        head_cam_observations = {}
+        arm_observations = {}
+
+        if "base_proprioceptive" in observations:
+            head_cam_observations['base_proprioceptive'] = observations['base_proprioceptive']
+            arm_observations['base_proprioceptive'] = observations['base_proprioceptive']
+
+        if "arm_proprioceptive" in observations:
+            arm_observations['arm_proprioceptive'] = observations['arm_proprioceptive']
+
+        if "rgb" in observations:
+            head_cam_observations["rgb"] = observations["rgb"]
+
+        if "depth" in observations:
+            head_cam_observations["depth"] = observations["depth"]
+
+        if "seg" in observations:
+            head_cam_observations["seg"] = observations["seg"]
+
+        if "wrist_rgb" in observations:
+            arm_observations["wrist_rgb"] = observations["wrist_rgb"]
+
+        if "wrist_depth" in observations:
+            arm_observations["wrist_depth"] = observations["wrist_depth"]
+
+        if "wrist_seg" in observations:
+            arm_observations["wrist_seg"] = observations["wrist_seg"]
+
+        return arm_observations, head_cam_observations
+
     def step(self, observations, explore=False):
         """
         Take a step forward in environment with all agents
@@ -93,8 +222,19 @@ class MADDPG(object):
         Outputs:
             actions: List of actions for each agent
         """
-        return [a.step(obs, explore=explore) for a, obs in zip(self.agents,
-                                                                 observations)]
+        result = []
+        base_observations = observations[0]
+        arm_observations, _ = self.split_observations(observations[1])
+        _, head_cam_observations = self.split_observations(observations[2])
+
+        result.append(self.agents[0].step(base_observations, explore=explore))
+        result.append(self.agents[1].step(arm_observations, explore=explore))
+        result.append(self.agents[2].step(head_cam_observations, explore=explore))
+
+        return result
+
+        # return [a.step(obs, explore=explore) for a, obs in zip(self.agents,
+        #                                                          observations)]
 
     def update(self, sample, agent_i, parallel=False, logger=None):
         """
@@ -114,14 +254,27 @@ class MADDPG(object):
 
         curr_agent.critic_optimizer.zero_grad()
         if self.alg_types[agent_i] == 'MADDPG':
-            if self.discrete_action: # one-hot encode action
-                all_trgt_acs = [onehot_from_logits(pi(nobs)) for pi, nobs in
-                                zip(self.target_policies, next_obs)]
-            else:
-                all_trgt_acs = [pi(nobs) for pi, nobs in zip(self.target_policies,
-                                                             next_obs)]
+            # if self.discrete_action: # one-hot encode action
+            #     all_trgt_acs = [onehot_from_logits(pi(nobs)) for pi, nobs in
+            #                     zip(self.target_policies, next_obs)]
+            # else:
+            #     all_trgt_acs = [pi(nobs) for pi, nobs in zip(self.target_policies,
+            #                                                  next_obs)]
+            all_trgt_acs = []
+            for i, (pi, nobs) in enumerate(zip(self.target_policies, next_obs)):
+                if i == 0:
+                    nobs = nobs
+                elif i == 1:
+                    nobs, _ = self.split_observations(nobs)
+                else:
+                    _, nobs = self.split_observations(nobs)
+
+                if self.agents[i].discrete_action:
+                    all_trgt_acs.append(onehot_from_logits(pi(nobs)))
+                else:
+                    all_trgt_acs.append(pi(nobs))
             # trgt_vf_in = torch.cat((*next_obs, *all_trgt_acs), dim=1)
-            trgt_vf_obs_in = next_obs[0]
+            trgt_vf_obs_in = next_obs[agent_i]
             trgt_vf_act_in = torch.cat(all_trgt_acs, dim=1)
         else:  # DDPG
             if self.discrete_action:
@@ -144,7 +297,7 @@ class MADDPG(object):
 
         if self.alg_types[agent_i] == 'MADDPG':
             # vf_in = torch.cat((*obs, *acs), dim=1)
-            vf_obs_in = obs[0]
+            vf_obs_in = obs[agent_i]
             vf_act_in = torch.cat(acs, dim=1)
         else:  # DDPG
             vf_in = torch.cat((obs[agent_i], acs[agent_i]), dim=1)
@@ -159,20 +312,34 @@ class MADDPG(object):
 
         curr_agent.policy_optimizer.zero_grad()
 
+        if agent_i == 0:
+            curr_obs = obs[agent_i]
+        elif agent_i == 1:
+            curr_obs, _ = self.split_observations(obs[agent_i])
+        else:
+            _, curr_obs = self.split_observations(obs[agent_i])
         if self.discrete_action:
             # Forward pass as if onehot (hard=True) but backprop through a differentiable
             # Gumbel-Softmax sample. The MADDPG paper uses the Gumbel-Softmax trick to backprop
             # through discrete categorical samples, but I'm not sure if that is
             # correct since it removes the assumption of a deterministic policy for
             # DDPG. Regardless, discrete policies don't seem to learn properly without it.
-            curr_pol_out = curr_agent.policy(obs[agent_i])
+            curr_pol_out = curr_agent.policy(curr_obs)
             curr_pol_vf_in = gumbel_softmax(curr_pol_out, hard=True)
         else:
-            curr_pol_out = curr_agent.policy(obs[agent_i])
+            curr_pol_out = curr_agent.policy(curr_obs)
             curr_pol_vf_in = curr_pol_out
+
         if self.alg_types[agent_i] == 'MADDPG':
             all_pol_acs = []
             for i, pi, ob in zip(range(self.nagents), self.policies, obs):
+                if i == 0:
+                    ob = ob
+                elif i == 1:
+                    ob, _ = self.split_observations(ob)
+                else:
+                    _, ob = self.split_observations(ob)
+
                 if i == agent_i:
                     all_pol_acs.append(curr_pol_vf_in)
                 elif self.discrete_action:
@@ -180,7 +347,7 @@ class MADDPG(object):
                 else:
                     all_pol_acs.append(pi(ob))
             # vf_in = torch.cat((*obs, *all_pol_acs), dim=1)
-            vf_obs_in = obs[0]
+            vf_obs_in = obs[agent_i]
             vf_act_in = torch.cat(all_pol_acs, dim=1)
         else:  # DDPG
             vf_in = torch.cat((obs[agent_i], curr_pol_vf_in),
