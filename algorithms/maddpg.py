@@ -102,7 +102,7 @@ class MADDPG(object):
 
         has_goal = 'goal' in observation_space
         critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256, has_goal=has_goal)
-        target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256)
+        target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256, has_goal=has_goal)
 
         self.agents = [
             DDPGAgent(policy=base_policy,
