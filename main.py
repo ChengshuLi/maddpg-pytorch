@@ -77,7 +77,7 @@ def run(config):
                                  physics_timestep=1/40.0,
                                  random_height=True,
                                  automatic_reset=True,
-                                 device_idx=1)
+                                 device_idx=0)
 
     env = [lambda: load_env("headless")
                   for env_id in range(config.n_rollout_threads)]

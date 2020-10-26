@@ -89,7 +89,7 @@ class MADDPG(object):
         arm_encoder =  Net(arm_observation_space)
         target_arm_encoder =  Net(arm_observation_space)
         head_cam_encoder = Net(head_cam_observation_space)
-        target_head_cam_encoder =  Net(head_cam_observation_space)
+        target_head_cam_encoder = Net(head_cam_observation_space)
 
         base_policy = Actor(base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
         target_base_policy = Actor(target_base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
@@ -97,8 +97,8 @@ class MADDPG(object):
         arm_policy = Actor(arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
         target_arm_policy = Actor(target_arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
 
-        head_cam_policy = Actor(head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
-        target_head_cam_policy = Actor(target_head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
+        head_cam_policy = Actor(head_cam_encoder, action_dim=3, discrete_action=True, hidden_dim=256)
+        target_head_cam_policy = Actor(target_head_cam_encoder, action_dim=3, discrete_action=True, hidden_dim=256)
 
         has_goal = 'goal' in observation_space
         critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256, has_goal=has_goal)
