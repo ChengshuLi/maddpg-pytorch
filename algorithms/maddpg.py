@@ -35,7 +35,7 @@ class Critic(nn.Module):
         self.has_goal = has_goal
         if self.has_goal:
             self.goal_feat = nn.Sequential(
-                nn.Linear(3, 256),
+                nn.Linear(4, 256),
                 nn.ReLU()
             )
             critic_head_in = 512 + 256 + 256
