@@ -72,27 +72,30 @@ class MADDPG(object):
         self.nagents = len(alg_types)
         self.alg_types = alg_types
 
-        arm_observation_space, head_cam_observation_space = \
-            self.split_observation_space(observation_space)
+        # arm_observation_space, head_cam_observation_space = \
+        #     self.split_observation_space(observation_space)
 
         base_encoder = Net(observation_space)
         target_base_encoder = Net(observation_space)
-        arm_encoder =  Net(arm_observation_space)
-        target_arm_encoder =  Net(arm_observation_space)
-        head_cam_encoder = Net(head_cam_observation_space)
-        target_head_cam_encoder =  Net(head_cam_observation_space)
+        # arm_encoder =  Net(arm_observation_space)
+        # target_arm_encoder =  Net(arm_observation_space)
+        # head_cam_encoder = Net(head_cam_observation_space)
+        # target_head_cam_encoder =  Net(head_cam_observation_space)
 
         base_policy = Actor(base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
         target_base_policy = Actor(target_base_encoder, action_dim=2, discrete_action=False, hidden_dim=256)
 
-        arm_policy = Actor(arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
-        target_arm_policy = Actor(target_arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
+        # arm_policy = Actor(arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
+        # target_arm_policy = Actor(target_arm_encoder, action_dim=5, discrete_action=False, hidden_dim=256)
 
-        head_cam_policy = Actor(head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
-        target_head_cam_policy = Actor(target_head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
+        # head_cam_policy = Actor(head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
+        # target_head_cam_policy = Actor(target_head_cam_encoder, action_dim=3, discrete_action=False, hidden_dim=256)
 
-        critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256)
-        target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256)
+        # critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256)
+        # target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256)
+
+        critic = Critic(base_encoder, total_action_dim=2, hidden_dim=256)
+        target_critic = Critic(target_base_encoder, total_action_dim=2, hidden_dim=256)
 
         self.agents = [
             DDPGAgent(policy=base_policy,
@@ -102,20 +105,20 @@ class MADDPG(object):
                       action_dim=2,
                       lr=lr,
                       discrete_action=False),
-            DDPGAgent(policy=arm_policy,
-                      target_policy=target_arm_policy,
-                      critic=critic,
-                      target_critic=target_critic,
-                      action_dim=5,
-                      lr=lr,
-                      discrete_action=False),
-            DDPGAgent(policy=head_cam_policy,
-                      target_policy=target_head_cam_policy,
-                      critic=critic,
-                      target_critic=target_critic,
-                      action_dim=3,
-                      lr=lr,
-                      discrete_action=True),
+            # DDPGAgent(policy=arm_policy,
+            #           target_policy=target_arm_policy,
+            #           critic=critic,
+            #           target_critic=target_critic,
+            #           action_dim=5,
+            #           lr=lr,
+            #           discrete_action=False),
+            # DDPGAgent(policy=head_cam_policy,
+            #           target_policy=target_head_cam_policy,
+            #           critic=critic,
+            #           target_critic=target_critic,
+            #           action_dim=3,
+            #           lr=lr,
+            #           discrete_action=True),
         ]
         self.gamma = gamma
         self.tau = tau
@@ -436,8 +439,8 @@ class MADDPG(object):
         #              atype in env.agent_types]
         
         # three agents: base, arm, head camera
-        alg_types = [agent_alg for _ in range(3)]
-
+        # alg_types = [agent_alg for _ in range(3)]
+        alg_types = [agent_alg]
         # for acsp, obsp, algtype in zip(env.action_space, env.observation_space,
         #                                alg_types):
         #     num_in_pol = obsp.shape[0]

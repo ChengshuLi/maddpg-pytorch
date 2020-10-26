@@ -69,7 +69,7 @@ def run(config):
     # env = make_parallel_env(config.env_id, config.n_rollout_threads, config.seed,
     #                         config.discrete_action)
 
-    config_file = '/cvgl2/u/chengshu/iGibson-MM/examples/configs/master_config.yaml'
+    config_file = '/cvgl2/u/chengshu/iGibson-MM/examples/configs/master_config_base_nav.yaml'
     def load_env(env_mode):
         return NavigateRandomEnv(config_file=config_file,
                                  mode=env_mode,
@@ -93,10 +93,14 @@ def run(config):
                                   adversary_alg=config.adversary_alg,
                                   tau=config.tau,
                                   lr=config.lr)
+    # replay_buffer = ReplayBuffer(config.buffer_length,
+    #                              maddpg.nagents,
+    #                              env.observation_space,
+    #                              [2, 5, 3])
     replay_buffer = ReplayBuffer(config.buffer_length,
                                  maddpg.nagents,
                                  env.observation_space,
-                                 [2, 5, 3])
+                                 [2])
     t = 0
     for ep_i in range(0, config.n_episodes, config.n_rollout_threads):
         print("Episodes %i-%i of %i" % (ep_i + 1,
@@ -126,17 +130,18 @@ def run(config):
             # agent_actions: list of [N, A], N is number of parallel envs, A is action space, list length is N_agents
             agent_actions = [ac.data.numpy() for ac in torch_agent_actions]
 
-            camera_actions = np.argmax(agent_actions[2], axis=1)
-            camera_actions = np.expand_dims(camera_actions, axis=1)
+            # camera_actions = np.argmax(agent_actions[2], axis=1)
+            # camera_actions = np.expand_dims(camera_actions, axis=1)
 
-            base_and_arm_actions = np.concatenate([agent_actions[0], agent_actions[1]], axis=1)
+            # base_and_arm_actions = np.concatenate([agent_actions[0], agent_actions[1]], axis=1)
             # rearrange actions to be per environment
             # actions: list of [N_agents, A], N_agents is number of agents, A is action space, list length is N, number of parallel envs
             # actions = [[ac[i] for ac in agent_actions] for i in range(config.n_rollout_threads)]
-            env.set_camera(camera_actions)
+            # env.set_camera(camera_actions)
 
             # next_obs, rewards, dones, infos = env.step(actions)
-            outputs = env.step(base_and_arm_actions)
+            # outputs = env.step(base_and_arm_actions)
+            outputs = env.step(agent_actions[0])
             next_obs, rewards, dones, infos = [list(x) for x in zip(*outputs)]
             obs_batched = batch_obs(obs, torchify=False)
             next_obs_batched = batch_obs(next_obs, torchify=False)
