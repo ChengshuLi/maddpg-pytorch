@@ -236,12 +236,12 @@ class MADDPG(object):
         """
         result = []
         base_observations = observations[0]
-        arm_observations, _ = self.split_observations(observations[1])
-        _, head_cam_observations = self.split_observations(observations[2])
+        # arm_observations, _ = self.split_observations(observations[1])
+        # _, head_cam_observations = self.split_observations(observations[2])
 
         result.append(self.agents[0].step(base_observations, explore=explore))
-        result.append(self.agents[1].step(arm_observations, explore=explore))
-        result.append(self.agents[2].step(head_cam_observations, explore=explore))
+        # result.append(self.agents[1].step(arm_observations, explore=explore))
+        # result.append(self.agents[2].step(head_cam_observations, explore=explore))
 
         return result
 
