@@ -25,26 +25,35 @@ class Actor(nn.Module):
         return self.actor_head(self.encoder(obs))
 
 class Critic(nn.Module):
-    def __init__(self, encoder, total_action_dim, hidden_dim=256):
+    def __init__(self, encoder, total_action_dim, hidden_dim=256, has_goal=True):
         super().__init__()
         self.encoder = encoder
         self.actor_feat = nn.Sequential(
             nn.Linear(total_action_dim, 256),
             nn.ReLU()
         )
-        self.goal_feat = nn.Sequential(
-            nn.Linear(3, 256),
-            nn.ReLU()
-        )
-        self.critic_head = MLPNetwork(512 + 256, 1,
+        self.has_goal = has_goal
+        if self.has_goal:
+            self.goal_feat = nn.Sequential(
+                nn.Linear(3, 256),
+                nn.ReLU()
+            )
+            critic_head_in = 512 + 256 + 256
+        else:
+            critic_head_in = 512 + 256
+
+        self.critic_head = MLPNetwork(critic_head_in, 1,
                                       hidden_dim=hidden_dim,
                                       constrain_out=False)
 
     def forward(self, obs, action):
         obs_feat = self.encoder(obs)
         actor_feat = self.actor_feat(action)
-        goal_feat = self.goal_feat(obs['goal'])
-        feat = torch.cat([obs_feat, actor_feat], dim=1)
+        if self.has_goal:
+            goal_feat = self.goal_feat(obs['goal'])
+            feat = torch.cat([obs_feat, actor_feat, goal_feat], dim=1)
+        else:
+            feat = torch.cat([obs_feat, actor_feat], dim=1)
         return self.critic_head(feat)
 
 class MADDPG(object):
@@ -93,8 +102,8 @@ class MADDPG(object):
 
         # critic = Critic(base_encoder, total_action_dim=10, hidden_dim=256)
         # target_critic = Critic(target_base_encoder, total_action_dim=10, hidden_dim=256)
-
-        critic = Critic(base_encoder, total_action_dim=2, hidden_dim=256)
+        has_goal = 'goal' in observation_space
+        critic = Critic(base_encoder, total_action_dim=2, hidden_dim=256, has_goal=has_goal)
         target_critic = Critic(target_base_encoder, total_action_dim=2, hidden_dim=256)
 
         self.agents = [
